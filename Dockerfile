@@ -1,5 +1,5 @@
 FROM golang:1.13.1-alpine3.10 AS builder
-RUN apk --no-cache add git upx ca-certificates
+RUN apk --no-cache add git upx ca-certificates bash
 RUN mkdir -p /workspace
 
 # This will allow caching dependencies and not triggering
@@ -9,6 +9,7 @@ WORKDIR /workspace
 RUN go mod download
 
 COPY . /workspace
+RUN ./codegen/codegen.sh
 ENV CGO_ENABLED 0
 RUN go build -ldflags "-s -w -extldflags '-static'" \
 	-mod=readonly -o bin/private-dns cmd/main.go

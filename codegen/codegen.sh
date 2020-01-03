@@ -14,8 +14,8 @@ if [ ! -f ${GENERATOR} ]; then
 	echo "Will bootstrap the setup"
 	GOPATH="${TMPGOATH}"
 	mkdir -p ${TMPGOATH}
-	go get k8s.io/code-generator@v0.17.0
-	GENERATOR="${GOPATH}/pkg/mod/k8s.io/code-generator@v0.17.0/generate-groups.sh"
+	go get k8s.io/code-generator@v0.18.0-alpha.1
+	GENERATOR="${GOPATH}/pkg/mod/k8s.io/code-generator@v0.18.0-alpha.1/generate-groups.sh"
 fi
 
 chmod +x ${GENERATOR}

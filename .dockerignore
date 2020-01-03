@@ -1,0 +1,9 @@
+/example
+/vendor
+/deploy
+/bin
+Dockerfile
+.gitignore
+*.md
+/pkg/gen/
+/pkg/apis/v1/zz_generated_deepcopy.go
