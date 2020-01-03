@@ -1,0 +1,7 @@
+apiVersion: "tanelmae.github.com/v1"
+kind: PrivateDNS
+metadata:
+  name: example-app
+spec:
+  label: app=example
+  domain: blahblah.com
