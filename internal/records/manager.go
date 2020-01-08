@@ -12,50 +12,34 @@ import (
 	"time"
 )
 
-type DNSResource struct {
-	Namespace string
-	Label     string
-	Domain    string
-	SrvName   string
-	Service   bool
-}
+type close struct{}
 
-// Run starts the service
-func Run(res DNSResource, podTimeout time.Duration,
-	kubeClient *kubernetes.Clientset, cloudDNS *pdns.CloudDNS, stopCh chan struct{}) {
+type CloseAndRemove struct{}
 
-	manager := RecordsManager{
+func New(name, domain, label, namespace, srvName string, service bool, podTimeout time.Duration,
+	kubeClient *kubernetes.Clientset, cloudDNS *pdns.CloudDNS) Manager {
+
+	m := Manager{
+		name:       name,
 		kubeClient: kubeClient,
 		dnsClient:  cloudDNS,
-		resource:   res,
+		namespace:  namespace,
+		label:      label,
+		domain:     domain,
+		srvName:    srvName,
+		service:    service,
 		timeout:    podTimeout,
 		pendingIP:  make(map[string]time.Time),
-		stopChan:   stopCh,
+		stopChan:   make(chan struct{}),
 	}
 
-	manager.startWatcher()
-}
-
-// RecordsManager ..
-type RecordsManager struct {
-	kubeClient *kubernetes.Clientset
-	dnsClient  *pdns.CloudDNS
-	resource   DNSResource
-	timeout    time.Duration
-	namespace  string
-	resLabel   string
-	pendingIP  map[string]time.Time
-	stopChan   chan struct{}
-}
-
-func (m RecordsManager) startWatcher() {
 	watchlist := cache.NewFilteredListWatchFromClient(
-		m.kubeClient.CoreV1().RESTClient(), "pods", m.resource.Namespace,
+		m.kubeClient.CoreV1().RESTClient(), "pods", m.namespace,
 		func(options *metav1.ListOptions) {
-			options.LabelSelector = m.resource.Label
+			options.LabelSelector = m.label
 		})
 
-	_, controller := cache.NewInformer(
+	s, c := cache.NewInformer(
 		watchlist,
 		&v1.Pod{},
 		0,
@@ -66,39 +50,75 @@ func (m RecordsManager) startWatcher() {
 			UpdateFunc: m.podUpdated,
 		},
 	)
+	m.store = s
+	m.controller = c
+	return m
+}
+
+// Manager ..
+type Manager struct {
+	name       string
+	kubeClient *kubernetes.Clientset
+	dnsClient  *pdns.CloudDNS
+	timeout    time.Duration
+	resLabel   string
+	pendingIP  map[string]time.Time
+	stopChan   chan struct{}
+	namespace  string
+	label      string
+	domain     string
+	srvName    string
+	service    bool
+	store      cache.Store
+	controller cache.Controller
+}
+
+func (m Manager) Start() {
 	/*
 		Initial startup will triggger AddFunc for all the pods that match the watchlist.
 		Handlers are run sequentally as the events come in.
 	*/
-	klog.Infof("Will watch pods with %s label in %s namespace\n", m.resource.Label, m.resource.Namespace)
+	klog.Infof("Will watch pods with %s label in %s namespace\n", m.label, m.namespace)
 
 	// Checks with given interval that all expected records are there
 	// and removes any stale record if any is found.
-	//m.startSyncJob()
-	go controller.Run(m.stopChan)
-	<-m.stopChan
-	m.removeAllRecords()
+	m.controller.Run(m.stopChan)
+	klog.Infof("Records manager for %s/%s\n stopped", m.name, m.namespace)
 }
 
-func (m RecordsManager) removeAllRecords() {
-	klog.Infoln("Remove all records")
+func (m Manager) Stop() {
+	m.stopChan <- close{}
+	klog.Infof("Stopping pod watcher for %s/%s \n", m.namespace, m.name)
 }
 
-func (m RecordsManager) podAddresss(pod *v1.Pod) string {
+func (m Manager) Destroy() {
+	m.Stop()
+	klog.Infof("Remove all %s/%s private DNS records\n", m.namespace, m.name)
+
+	if len(m.store.List()) > 0 {
+		for _, i := range m.store.List() {
+			m.podDeleted(i)
+		}
+	} else {
+		klog.Infof("No pods found for %s/%s\n", m.namespace, m.name)
+	}
+}
+
+func (m Manager) podAddresss(pod *v1.Pod) string {
 	// Example: httppod-0.httpstatefulset.example.com
-	return fmt.Sprintf("%s.%s.%s", pod.GetName(), pod.GetOwnerReferences()[0].Name, m.resource.Domain)
+	return fmt.Sprintf("%s.%s.%s", pod.GetName(), pod.GetOwnerReferences()[0].Name, m.domain)
 }
 
-func (m RecordsManager) serviceAddresss(pod *v1.Pod) string {
+func (m Manager) serviceAddresss(pod *v1.Pod) string {
 	// Example: httpstatefulset.example.com
-	return fmt.Sprintf("%s.%s", pod.GetOwnerReferences()[0].Name, m.resource.Domain)
+	return fmt.Sprintf("%s.%s", pod.GetOwnerReferences()[0].Name, m.domain)
 }
 
-func (m RecordsManager) srvAddresss() string {
-	return m.resource.SrvName
+func (m Manager) srvAddresss() string {
+	return m.srvName
 }
 
-func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
+func (m Manager) podUpdated(oldObj, newObj interface{}) {
 	newPod := newObj.(*v1.Pod)
 	klog.V(2).Infof("Pod updated: %s\n", newPod.Name)
 
@@ -117,7 +137,7 @@ func (m RecordsManager) podUpdated(oldObj, newObj interface{}) {
 }
 
 // Handler for pod creation
-func (m RecordsManager) podCreated(obj interface{}) {
+func (m Manager) podCreated(obj interface{}) {
 	pod := obj.(*v1.Pod)
 	podName := pod.GetName()
 	namespace := pod.GetNamespace()
@@ -162,18 +182,18 @@ func (m RecordsManager) podCreated(obj interface{}) {
 
 	req := m.dnsClient.NewRequest()
 	req.CreateRecord(m.podAddresss(pod), pod.Status.PodIP)
-	if m.resource.Service {
+	if m.service {
 		req.AddToService(m.serviceAddresss(pod), pod.Status.PodIP)
 	}
 
-	if m.resource.SrvName != "" {
+	if m.srvName != "" {
 		req.AddToSRV(m.srvAddresss(), m.serviceAddresss(pod), 1)
 	}
 	req.Do()
 }
 
 // Handler for pod deletion events
-func (m RecordsManager) podDeleted(obj interface{}) {
+func (m Manager) podDeleted(obj interface{}) {
 	pod := obj.(*v1.Pod)
 	klog.V(2).Infof("Pod deleted: %s", pod.GetName())
 
@@ -181,11 +201,11 @@ func (m RecordsManager) podDeleted(obj interface{}) {
 
 	req.DeleteRecord(m.podAddresss(pod), pod.Status.PodIP)
 
-	if m.resource.Service {
+	if m.service {
 		req.RemoveFromService(m.serviceAddresss(pod), pod.Status.PodIP)
 	}
 
-	if m.resource.SrvName != "" {
+	if m.srvName != "" {
 		req.RemoveFromSRV(m.srvAddresss(), m.serviceAddresss(pod))
 	}
 	req.Do()

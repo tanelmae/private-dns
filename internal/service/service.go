@@ -9,31 +9,31 @@ import (
 	"github.com/tanelmae/private-dns/pkg/pdns"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"os"
+	"os/signal"
 	"strings"
-	"time"
-
-	"k8s.io/apimachinery/pkg/util/wait"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"sync"
+	"syscall"
+	"time"
 )
 
 const (
 	defaultTimeout = time.Minute * 2
 )
 
-type CloseController struct{}
+type close struct{}
 
 // TODO: support both auto init and passing API clients in for testing
 func NewPrivateDNSController(kubeClient *kubernetes.Clientset, dnsClient *pdns.CloudDNS) (*Controller, error) {
 	return &Controller{
 		kubeClient: kubeClient,
 		dnsClient:  dnsClient,
-		res:        make(map[string]chan struct{}),
+		res:        make(map[string]*records.Manager),
 	}, nil
 }
 
@@ -41,7 +41,7 @@ type Controller struct {
 	mu         sync.Mutex
 	kubeClient *kubernetes.Clientset
 	dnsClient  *pdns.CloudDNS
-	res        map[string]chan struct{}
+	res        map[string]*records.Manager
 }
 
 // Run starts the private DNS service
@@ -82,59 +82,105 @@ func (c *Controller) Run() {
 		},
 	)
 
-	crdbInformer.Run(wait.NeverStop)
-	// Create RecordsManagers per found CRDs
+	stopChan := make(chan struct{})
+	go crdbInformer.Run(stopChan)
+
+	c.gracefulShutdownHandler(stopChan)
+}
+
+func (c *Controller) gracefulShutdownHandler(stopChan chan struct{}) {
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	<-done
+
+	// Stop CRD watcher
+	stopChan <- close{}
+
+	// Stop any pod watchers that might be running
+	if len(c.res) > 0 {
+		for _, i := range c.res {
+			i.Stop()
+		}
+	}
+
+	time.Sleep(time.Second)
+	klog.Infoln("Private DNS service Stopped")
 }
 
 // TODO: create managers per CRD and destroy manager and records when CRD is removed
 func (c *Controller) dnsRequestCreated(obj interface{}) {
 	pdns := obj.(*dnsAPI.PrivateDNS)
-	klog.Infof("%s create in %s namespace", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
+	klog.Infof("%s created in %s namespace", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
 
-	klog.Infof("%+v", *c)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	dnsResource := records.DNSResource{
-		Namespace: pdns.GetNamespace(),
-		Label:     pdns.Spec.Label,
-		Domain:    pdns.Spec.Domain,
-		SrvName:   pdns.Spec.SRVName,
-		Service:   pdns.Spec.Service,
-	}
-
-	stopCh := make(chan struct{})
-	records.Run(
-		dnsResource,
+	regKey := fmt.Sprintf("%s/%s", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
+	m := records.New(
+		pdns.Name,
+		pdns.Spec.Domain,
+		pdns.Spec.Label,
+		pdns.GetNamespace(),
+		pdns.Spec.SRVName,
+		pdns.Spec.Service,
 		pdns.Spec.PodTimeout,
 		c.kubeClient,
 		c.dnsClient,
-		stopCh,
 	)
-	c.res[fmt.Sprintf("%s/%s", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)] = stopCh
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.res[regKey]; exists {
+		klog.Errorf("Pod watcher for %s already exists. Doing nothing.", regKey)
+		return
+	}
+
+	c.res[regKey] = &m
+	go m.Start()
 }
 
 func (c *Controller) dnsRequestDeleted(obj interface{}) {
 	pdns := obj.(*dnsAPI.PrivateDNS)
 	klog.Infof("%s deleted in %s namespace", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
 
+	regKey := fmt.Sprintf("%s/%s", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	regKey := fmt.Sprintf("%s/%s", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
-	c.res[regKey] <- CloseController{}
-	close(c.res[regKey])
-	delete(c.res, regKey)
+	if m, exists := c.res[regKey]; exists {
+		m.Destroy()
+		delete(c.res, regKey)
+	}
 }
 
 func (c *Controller) dnsRequestUpdated(old, new interface{}) {
 	pdns := old.(*dnsAPI.PrivateDNS)
 	klog.Infof("%s updated in %s namespace", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
-	klog.Infof("Not supported yet")
-	/*
-		c.mu.Lock()
-		defer c.mu.Unlock()
-	*/
+
+	regKey := fmt.Sprintf("%s/%s", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if m, exists := c.res[regKey]; exists {
+		m.Destroy()
+		delete(c.res, regKey)
+	} else {
+		// This shouldn't happen
+		klog.Errorf("Pod watcher for %s didn't exist exists! Something is broken!", regKey)
+	}
+
+	m := records.New(
+		pdns.Name,
+		pdns.Spec.Domain,
+		pdns.Spec.Label,
+		pdns.GetNamespace(),
+		pdns.Spec.SRVName,
+		pdns.Spec.Service,
+		pdns.Spec.PodTimeout,
+		c.kubeClient,
+		c.dnsClient,
+	)
+	c.res[regKey] = &m
+	go m.Start()
+
 }
 
 // Will use local conf file when found. Otherwise assumes running
