@@ -134,16 +134,25 @@ func (m Manager) podUpdated(oldObj, newObj interface{}) {
 	if isPendingIP && pod.Status.PodIP != "" {
 		klog.V(2).Infof("Able to resolve a pending record for %s since %s\n", podName, lastTime.String())
 
-		m.ensureRecords(pod)
-		delete(m.pendingIP, pendingID)
+		if m.ensureRecords(pod) {
+			delete(m.pendingIP, pendingID)
+		}
 	}
 }
 
 // Handler for pod creation
 func (m Manager) podCreated(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	klog.V(2).Infof("Pod created: %s/%s", pod.GetNamespace(), pod.GetName())
+	podName := pod.GetName()
+	namespace := pod.GetNamespace()
+	klog.V(2).Infof("Pod created: %s/%s", namespace, podName)
 	m.ensureRecords(pod)
+
+	if m.ensureRecords(pod) {
+		pendingID := fmt.Sprintf("%s/%s", namespace, podName)
+		m.pendingIP[pendingID] = time.Now()
+	}
+
 }
 
 // Handler for pod deletion events
@@ -168,9 +177,7 @@ func (m Manager) deleteRecords(pod *v1.Pod) {
 	req.Do()
 }
 
-func (m Manager) ensureRecords(pod *v1.Pod) {
-	podName := pod.GetName()
-	namespace := pod.GetNamespace()
+func (m Manager) ensureRecords(pod *v1.Pod) bool {
 	var err error
 
 	if pod.Status.PodIP == "" {
@@ -193,13 +200,13 @@ func (m Manager) ensureRecords(pod *v1.Pod) {
 			pod.GetNamespace()).Get(pod.GetName(), metav1.GetOptions{})
 		if err != nil {
 			klog.Error(err)
+			return false
 		}
 
 		// Leave if for the pod updated event handler
 		if err != nil || pod.Status.PodIP == "" {
 			klog.V(2).Infof("Failed get pod IP in %s\n", m.timeout)
-			m.pendingIP[fmt.Sprintf("%s/%s", namespace, podName)] = time.Now()
-			return
+			return false
 		}
 	}
 
@@ -212,5 +219,5 @@ func (m Manager) ensureRecords(pod *v1.Pod) {
 	if m.srvName != "" {
 		req.AddToSRV(m.srvAddresss(), m.serviceAddresss(pod), 1)
 	}
-	req.Do()
+	return req.Do()
 }

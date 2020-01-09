@@ -35,11 +35,11 @@ func FromJSON(filePath, zone, project string) *CloudDNS {
 	return &CloudDNS{api: dnsSvc, zone: zone, project: project}
 }
 
-func (c *CloudDNS) applyChange(change *dns.Change) {
+func (c *CloudDNS) applyChange(change *dns.Change) bool {
 	chg, err := c.api.Changes.Create(c.project, c.zone, change).Do()
 	if err != nil {
 		klog.Errorln(err)
-		return
+		return false
 	}
 
 	// wait for change to be acknowledged
@@ -49,9 +49,10 @@ func (c *CloudDNS) applyChange(change *dns.Change) {
 		chg, err = c.api.Changes.Get(c.project, c.zone, chg.Id).Do()
 		if err != nil {
 			klog.Errorln(err)
-			return
+			return false
 		}
 	}
+	return true
 }
 
 func (c *CloudDNS) checkForRec(rec *dns.ResourceRecordSet) *dns.ResourceRecordSet {
@@ -80,12 +81,12 @@ type DNSRequest struct {
 	change *dns.Change
 }
 
-func (d *DNSRequest) Do() {
+func (d *DNSRequest) Do() bool {
 	if len(d.change.Deletions) < 1 && len(d.change.Additions) < 1 {
-		klog.V(2).Infof("No changes to be done")
-		return
+		klog.V(2).Infoln("No changes to be done")
+		return true
 	}
-	d.client.applyChange(d.change)
+	return d.client.applyChange(d.change)
 }
 
 func (d *DNSRequest) deletion(rec *dns.ResourceRecordSet) {
@@ -104,7 +105,7 @@ func (d *DNSRequest) CreateRecord(domain, ip string) *DNSRequest {
 		Ttl:     int64(60),
 		Type:    "A",
 	}
-	klog.Infof("%+v", rec)
+	klog.V(2).Infof("%+v", rec)
 	oldRec := d.client.checkForRec(rec)
 
 	if oldRec != nil && rec.Rrdatas[0] == oldRec.Rrdatas[0] {
@@ -168,7 +169,7 @@ func (d *DNSRequest) AddToService(domain, ip string) *DNSRequest {
 	oldRec := d.client.checkForRec(rec)
 
 	if oldRec != nil && dataContains(oldRec, ip) {
-		klog.V(2).Infof("Record exists: %+v\n", oldRec)
+		klog.V(2).Infof("Service %s record exists and contains %s\n", domain, ip)
 		return d
 	}
 
@@ -196,14 +197,13 @@ func (d *DNSRequest) RemoveFromService(domain, ip string) *DNSRequest {
 		return d
 	}
 
-	copy(rec.Rrdatas, oldRec.Rrdatas)
-
-	if removeData(rec, ip) {
-		d.addition(rec)
-		d.deletion(oldRec)
-		return d
+	if newRec, ok := removeData(oldRec, ip); ok {
+		d.addition(newRec)
+	} else {
+		klog.Infof("%s service doesn't include %s\n", domain, ip)
 	}
-	klog.Infof("%s service doesn't include  %s\n", domain, ip)
+
+	d.deletion(oldRec)
 	return d
 }
 
@@ -251,14 +251,13 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) *DNSRequest {
 		return d
 	}
 
-	copy(rec.Rrdatas, oldRec.Rrdatas)
-
-	if removeData(rec, domain) {
-		d.addition(rec)
-		d.deletion(oldRec)
-		return d
+	if newRec, ok := removeData(rec, domain); ok {
+		d.addition(newRec)
+	} else {
+		klog.Infof("%s doesn't include  %s\n", srv, domain)
 	}
-	klog.Infof("%s doesn't include  %s\n", srv, domain)
+
+	d.deletion(oldRec)
 	return d
 }
 
@@ -273,14 +272,18 @@ func dataContains(rec *dns.ResourceRecordSet, data string) bool {
 	return false
 }
 
-func removeData(rec *dns.ResourceRecordSet, data string) bool {
-	for i, v := range rec.Rrdatas {
-		if v == data {
-			rec.Rrdatas = append(rec.Rrdatas[:i], rec.Rrdatas[i+1:]...)
-			return true
+func removeData(rec *dns.ResourceRecordSet, data string) (*dns.ResourceRecordSet, bool) {
+	newRec := *rec
+	newRec.Rrdatas = []string{}
+
+	for _, v := range rec.Rrdatas {
+		if v != data {
+			klog.Infoln("hit!")
+			newRec.Rrdatas = append(newRec.Rrdatas, v)
+			return &newRec, true
 		}
 	}
-	return false
+	return nil, false
 }
 
 // BulkSync struct exists to reducse GCP API requests
