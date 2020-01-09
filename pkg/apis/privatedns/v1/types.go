@@ -25,6 +25,7 @@ type PrivateDNSSpec struct {
 	SRVName    string        `json:"srv-name"`
 	PodTimeout time.Duration `json:"pod-timeout"`
 	Service    bool          `json:"service"`
+	Subdomain  bool          `json:"subdomain"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

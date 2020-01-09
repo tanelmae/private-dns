@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"github.com/tanelmae/private-dns/internal/records"
 	dnsAPI "github.com/tanelmae/private-dns/pkg/apis/privatedns/v1"
+	"github.com/tanelmae/private-dns/pkg/gcp"
 	"github.com/tanelmae/private-dns/pkg/gen/clientset/privatedns"
 	dnsV1 "github.com/tanelmae/private-dns/pkg/gen/informers/externalversions/privatedns/v1"
 	"github.com/tanelmae/private-dns/pkg/pdns"
-	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/rest"
@@ -28,12 +29,13 @@ const (
 
 type close struct{}
 
-func NewPrivateDNSController(kubeConf *rest.Config, dnsClient *pdns.CloudDNS) (*Controller, error) {
+func NewPrivateDNSController(kubeConf *rest.Config, dnsClient *pdns.CloudDNS, namespace string) (*Controller, error) {
 	var err error
 
 	c := &Controller{
 		dnsClient: dnsClient,
 		res:       make(map[string]*records.Manager),
+		namespace: namespace, // Empty will mean all
 	}
 
 	c.kubeClient, err = kubernetes.NewForConfig(kubeConf)
@@ -55,6 +57,7 @@ type Controller struct {
 	crdClient  *privatedns.Clientset
 	dnsClient  *pdns.CloudDNS
 	res        map[string]*records.Manager
+	namespace  string
 }
 
 // Run starts the private DNS service
@@ -63,7 +66,7 @@ func (c *Controller) Run() {
 	// client privatedns.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers
 	crdbInformer := dnsV1.NewPrivateDNSInformer(
 		c.crdClient,
-		metaV1.NamespaceAll,
+		c.namespace,
 		0,
 		cache.Indexers{},
 	)
@@ -105,8 +108,20 @@ func (c *Controller) gracefulShutdownHandler(stopChan chan struct{}) {
 func (c *Controller) dnsRequestCreated(obj interface{}) {
 	pdns := obj.(*dnsAPI.PrivateDNS)
 	klog.Infof("%s created in %s namespace", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
-
 	regKey := fmt.Sprintf("%s/%s", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)
+
+	if pdns.Spec.Subdomain {
+		name, err := gcp.GetClusterName()
+		if err != nil {
+			klog.Fatalln(err)
+		}
+		location, err := gcp.GetClusterLocation()
+		if err != nil {
+			klog.Fatalln(err)
+		}
+		pdns.Spec.Domain = fmt.Sprintf("%s.%s.%s", name, location, pdns.Spec.Domain)
+	}
+
 	m := records.New(
 		pdns.Name,
 		pdns.Spec.Domain,

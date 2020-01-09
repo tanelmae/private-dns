@@ -4,15 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"github.com/tanelmae/private-dns/internal/service"
+	"github.com/tanelmae/private-dns/pkg/gcp"
 	"github.com/tanelmae/private-dns/pkg/pdns"
-	"io/ioutil"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 // TODO: support passing in kubeconfig and context for local testing
@@ -24,7 +22,7 @@ func main() {
 	project := flag.String("project", "", "GCP project where the DNS zone is. Defaults to the same as GKE cluster.")
 	zone := flag.String("zone", "", "GCP DNS zone where to write the records")
 	saFile := flag.String("sa-file", "", "Path to GCP service account credentials")
-
+	namespace := flag.String("namespace", "", "Limits private DNS to the given namesapce")
 	kubeconfig := flag.String("kubeconfig", "", "Path to kubeconfig file. Not needed on Kubernetes.")
 
 	flag.Parse()
@@ -34,21 +32,8 @@ func main() {
 		klog.Fatalln(err)
 	}
 
-	// Init DNS client and pass it in
-
 	if *project == "" {
-		for i := 1; i <= 3; i++ {
-			p, err := getMetadata("project/project-id")
-			if err != nil {
-				klog.Infoln("Reading GCP project name from metadata failed")
-				time.Sleep(time.Second * time.Duration(i))
-				klog.Infoln("Will try again reading GCP project name from metadata")
-			} else {
-				project = &p
-				break
-			}
-		}
-
+		*project, err = gcp.GetProject()
 	}
 
 	if *project == "" {
@@ -60,7 +45,7 @@ func main() {
 	klog.Infof("DNS client: %+v\n", dnsClient)
 	klog.Flush()
 
-	controller, err := service.NewPrivateDNSController(config, nil)
+	controller, err := service.NewPrivateDNSController(config, dnsClient, *namespace)
 	if err != nil {
 		klog.Fatalln(err)
 	}
@@ -107,24 +92,4 @@ func resolveConfig(configPath string) (*rest.Config, error) {
 
 	klog.Infoln("Using incluster config")
 	return rest.InClusterConfig()
-}
-
-func getMetadata(urlPath string) (string, error) {
-	client := &http.Client{}
-	req, err := http.NewRequest("GET",
-		fmt.Sprintf("http://metadata/computeMetadata/v1/%s", urlPath), nil)
-	req.Header.Add("Metadata-Flavor", "Google")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-
-	defer resp.Body.Close()
-
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	return string(bodyBytes), nil
 }
