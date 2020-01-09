@@ -105,7 +105,7 @@ func (d *DNSRequest) CreateRecord(domain, ip string) *DNSRequest {
 		Ttl:     int64(60),
 		Type:    "A",
 	}
-	klog.V(2).Infof("%+v", rec)
+
 	oldRec := d.client.checkForRec(rec)
 
 	if oldRec != nil && rec.Rrdatas[0] == oldRec.Rrdatas[0] {
@@ -193,14 +193,14 @@ func (d *DNSRequest) RemoveFromService(domain, ip string) *DNSRequest {
 
 	oldRec := d.client.checkForRec(rec)
 	if oldRec == nil {
-		klog.Infof("No record exists for %s\n", domain)
+		klog.V(2).Infof("No record exists for %s\n", domain)
 		return d
 	}
 
 	if newRec, ok := removeData(oldRec, ip); ok {
 		d.addition(newRec)
 	} else {
-		klog.Infof("%s service doesn't include %s\n", domain, ip)
+		klog.V(2).Infof("%s service doesn't include %s\n", domain, ip)
 	}
 
 	d.deletion(oldRec)
@@ -247,14 +247,14 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) *DNSRequest {
 
 	oldRec := d.client.checkForRec(rec)
 	if oldRec == nil {
-		klog.Infof("No record exists for %s\n", srv)
+		klog.V(2).Infof("No record exists for %s\n", srv)
 		return d
 	}
 
 	if newRec, ok := removeData(rec, domain); ok {
 		d.addition(newRec)
 	} else {
-		klog.Infof("%s doesn't include  %s\n", srv, domain)
+		klog.V(2).Infof("%s doesn't include  %s\n", srv, domain)
 	}
 
 	d.deletion(oldRec)
@@ -262,7 +262,6 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) *DNSRequest {
 }
 
 // UTILS
-
 func dataContains(rec *dns.ResourceRecordSet, data string) bool {
 	for _, d := range rec.Rrdatas {
 		if d == data {
@@ -278,7 +277,6 @@ func removeData(rec *dns.ResourceRecordSet, data string) (*dns.ResourceRecordSet
 
 	for _, v := range rec.Rrdatas {
 		if v != data {
-			klog.Infoln("hit!")
 			newRec.Rrdatas = append(newRec.Rrdatas, v)
 			return &newRec, true
 		}
