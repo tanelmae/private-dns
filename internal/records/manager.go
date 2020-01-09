@@ -101,7 +101,8 @@ func (m Manager) Destroy() {
 
 	if len(m.store.List()) > 0 {
 		for _, i := range m.store.List() {
-			m.podDeleted(i)
+			pod := i.(*v1.Pod)
+			m.deleteRecords(pod)
 		}
 	} else {
 		klog.Infof("No pods found for %s/%s\n", m.namespace, m.name)
@@ -123,24 +124,53 @@ func (m Manager) srvAddresss() string {
 }
 
 func (m Manager) podUpdated(oldObj, newObj interface{}) {
-	newPod := newObj.(*v1.Pod)
-	klog.V(2).Infof("Pod updated: %s\n", newPod.Name)
+	pod := newObj.(*v1.Pod)
+	podName := pod.GetName()
+	namespace := pod.GetNamespace()
+	klog.V(2).Infof("Pod updated: %s/%s\n", namespace, podName)
 
-	lastTime, isPendingIP := m.pendingIP[fmt.Sprintf("%s/%s", newPod.GetNamespace(), newPod.GetName())]
-	if isPendingIP && newPod.Status.PodIP != "" {
-		klog.V(2).Infof("Able to resolve a pending record for %s since %s\n", newPod.GetName(), lastTime.String())
+	pendingID := fmt.Sprintf("%s/%s", namespace, podName)
+	lastTime, isPendingIP := m.pendingIP[pendingID]
+	if isPendingIP && pod.Status.PodIP != "" {
+		klog.V(2).Infof("Able to resolve a pending record for %s since %s\n", podName, lastTime.String())
 
-		m.dnsClient.NewRequest().CreateRecord(m.podAddresss(newPod), newPod.Status.PodIP).Do()
-		delete(m.pendingIP, newPod.GetName())
+		m.ensureRecords(pod)
+		delete(m.pendingIP, pendingID)
 	}
 }
 
 // Handler for pod creation
 func (m Manager) podCreated(obj interface{}) {
 	pod := obj.(*v1.Pod)
+	klog.V(2).Infof("Pod created: %s/%s", pod.GetNamespace(), pod.GetName())
+	m.ensureRecords(pod)
+}
+
+// Handler for pod deletion events
+func (m Manager) podDeleted(obj interface{}) {
+	pod := obj.(*v1.Pod)
+	klog.V(2).Infof("Pod deleted: %s/%s", pod.GetNamespace(), pod.GetName())
+	m.deleteRecords(pod)
+}
+
+func (m Manager) deleteRecords(pod *v1.Pod) {
+	req := m.dnsClient.NewRequest()
+
+	req.DeleteRecord(m.podAddresss(pod), pod.Status.PodIP)
+
+	if m.service {
+		req.RemoveFromService(m.serviceAddresss(pod), pod.Status.PodIP)
+	}
+
+	if m.srvName != "" {
+		req.RemoveFromSRV(m.srvAddresss(), m.serviceAddresss(pod))
+	}
+	req.Do()
+}
+
+func (m Manager) ensureRecords(pod *v1.Pod) {
 	podName := pod.GetName()
 	namespace := pod.GetNamespace()
-	klog.V(2).Infof("Pod created: %s/%s", namespace, podName)
 	var err error
 
 	if pod.Status.PodIP == "" {
@@ -181,25 +211,6 @@ func (m Manager) podCreated(obj interface{}) {
 
 	if m.srvName != "" {
 		req.AddToSRV(m.srvAddresss(), m.serviceAddresss(pod), 1)
-	}
-	req.Do()
-}
-
-// Handler for pod deletion events
-func (m Manager) podDeleted(obj interface{}) {
-	pod := obj.(*v1.Pod)
-	klog.V(2).Infof("Pod deleted: %s", pod.GetName())
-
-	req := m.dnsClient.NewRequest()
-
-	req.DeleteRecord(m.podAddresss(pod), pod.Status.PodIP)
-
-	if m.service {
-		req.RemoveFromService(m.serviceAddresss(pod), pod.Status.PodIP)
-	}
-
-	if m.srvName != "" {
-		req.RemoveFromSRV(m.srvAddresss(), m.serviceAddresss(pod))
 	}
 	req.Do()
 }
