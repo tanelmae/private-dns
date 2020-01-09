@@ -60,6 +60,11 @@ func (c *CloudDNS) checkForRec(rec *dns.ResourceRecordSet) *dns.ResourceRecordSe
 		klog.Errorln(err)
 		return nil
 	}
+
+	if len(list.Rrsets) < 1 {
+		return nil
+	}
+
 	return list.Rrsets[0]
 }
 
