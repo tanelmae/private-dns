@@ -14,8 +14,8 @@ import (
 
 type close struct{}
 
-type CloseAndRemove struct{}
-
+// New creates the controller to watch pods with given properties
+// and trigger changes in the DNS records
 func New(name, domain, label, namespace, srvName string, service bool, podTimeout time.Duration,
 	kubeClient *kubernetes.Clientset, cloudDNS *pdns.CloudDNS) Manager {
 
@@ -73,6 +73,7 @@ type Manager struct {
 	controller cache.Controller
 }
 
+// Start will start watching pods defined in the CRD
 func (m Manager) Start() {
 	/*
 		Initial startup will triggger AddFunc for all the pods that match the watchlist.
@@ -86,11 +87,14 @@ func (m Manager) Start() {
 	klog.Infof("Records manager for %s/%s\n stopped", m.name, m.namespace)
 }
 
+// Stop will close the controller
 func (m Manager) Stop() {
 	m.stopChan <- close{}
 	klog.Infof("Stopping pod watcher for %s/%s \n", m.namespace, m.name)
 }
 
+// Destroy will close the controller and delete all DNS records
+// Should be used when CRD is deleted
 func (m Manager) Destroy() {
 	m.Stop()
 	klog.Infof("Remove all %s/%s private DNS records\n", m.namespace, m.name)
@@ -122,11 +126,6 @@ func (m Manager) podUpdated(oldObj, newObj interface{}) {
 	newPod := newObj.(*v1.Pod)
 	klog.V(2).Infof("Pod updated: %s\n", newPod.Name)
 
-	/*
-		Pod update handler is triggered quite often and for things
-		we don't care about here. So we keep in memory list of pods that
-		we know that record hasn't been created.
-	*/
 	lastTime, isPendingIP := m.pendingIP[fmt.Sprintf("%s/%s", newPod.GetNamespace(), newPod.GetName())]
 	if isPendingIP && newPod.Status.PodIP != "" {
 		klog.V(2).Infof("Able to resolve a pending record for %s since %s\n", newPod.GetName(), lastTime.String())
@@ -144,12 +143,6 @@ func (m Manager) podCreated(obj interface{}) {
 	klog.V(2).Infof("Pod created: %s/%s", namespace, podName)
 	var err error
 
-	/*
-		Needs to wait for slow services to be ready but
-		not block everything if pod fails for whatever reasons.
-		Either pod updated event handler or fallback sync jobs
-		should catch those missing DNS recrods.
-	*/
 	if pod.Status.PodIP == "" {
 		klog.Warningln("Pod IP missing. Will try to resolve.")
 		wait.Poll(2*time.Second, m.timeout, func() (bool, error) {

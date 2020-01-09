@@ -7,14 +7,17 @@ import (
 	"time"
 )
 
+// GetProject return GCP project name
 func GetProject() (string, error) {
 	return getMetadata("project/project-id")
 }
 
+// GetClusterName returns GKE cluster name
 func GetClusterName() (string, error) {
 	return getMetadata("/instance/attributes/cluster-name")
 }
 
+// GetClusterLocation returns GKE cluster location
 func GetClusterLocation() (string, error) {
 	return getMetadata("/instance/attributes/cluster-location")
 }

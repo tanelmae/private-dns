@@ -29,7 +29,8 @@ const (
 
 type close struct{}
 
-func NewPrivateDNSController(kubeConf *rest.Config, dnsClient *pdns.CloudDNS, namespace string) (*Controller, error) {
+// New creates a new private DNS Controller
+func New(kubeConf *rest.Config, dnsClient *pdns.CloudDNS, namespace string) (*Controller, error) {
 	var err error
 
 	c := &Controller{
@@ -51,6 +52,7 @@ func NewPrivateDNSController(kubeConf *rest.Config, dnsClient *pdns.CloudDNS, na
 	return c, nil
 }
 
+// Controller is the controller that manages DNS workers based on found CRDs
 type Controller struct {
 	mu         sync.Mutex
 	kubeClient *kubernetes.Clientset
@@ -104,7 +106,6 @@ func (c *Controller) gracefulShutdownHandler(stopChan chan struct{}) {
 	klog.Infoln("Private DNS service Stopped")
 }
 
-// TODO: create managers per CRD and destroy manager and records when CRD is removed
 func (c *Controller) dnsRequestCreated(obj interface{}) {
 	pdns := obj.(*dnsAPI.PrivateDNS)
 	klog.Infof("%s created in %s namespace", pdns.ObjectMeta.Name, pdns.ObjectMeta.Namespace)

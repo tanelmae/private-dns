@@ -45,7 +45,7 @@ func main() {
 	klog.Infof("DNS client: %+v\n", dnsClient)
 	klog.Flush()
 
-	controller, err := service.NewPrivateDNSController(config, dnsClient, *namespace)
+	controller, err := service.New(config, dnsClient, *namespace)
 	if err != nil {
 		klog.Fatalln(err)
 	}
