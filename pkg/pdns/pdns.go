@@ -81,6 +81,10 @@ type DNSRequest struct {
 }
 
 func (d *DNSRequest) Do() {
+	if len(d.change.Deletions) < 1 && len(d.change.Additions) < 1 {
+		klog.V(2).Infof("No changes to be done")
+		return
+	}
 	d.client.applyChange(d.change)
 }
 
@@ -105,7 +109,7 @@ func (d *DNSRequest) CreateRecord(domain, ip string) *DNSRequest {
 
 	if oldRec != nil && rec.Rrdatas[0] == oldRec.Rrdatas[0] {
 		klog.V(2).Infof("Record exists: %+v\n", rec)
-		return nil
+		return d
 	}
 
 	// Just a safeguard for case there is some stale record
@@ -138,14 +142,14 @@ func (d *DNSRequest) DeleteRecord(domain, ip string) *DNSRequest {
 
 	if len(list.Rrsets) == 0 {
 		klog.V(2).Infof("No DNS record found for %s/%s", rec.Name, ip)
-		return nil
+		return d
 	}
 
 	// If records and pods have somehow got into inconsistent state
 	// we avoid deleting records that don't match the event.
 	if ip != list.Rrsets[0].Rrdatas[0] {
 		klog.V(2).Infof("No DNS record found for %s with the same IP (%s)", rec.Name, ip)
-		return nil
+		return d
 	}
 	d.deletion(rec)
 	return d
@@ -165,7 +169,7 @@ func (d *DNSRequest) AddToService(domain, ip string) *DNSRequest {
 
 	if oldRec != nil && dataContains(oldRec, ip) {
 		klog.V(2).Infof("Record exists: %+v\n", oldRec)
-		return nil
+		return d
 	}
 
 	// Service exists and we need to add the IP
@@ -189,7 +193,7 @@ func (d *DNSRequest) RemoveFromService(domain, ip string) *DNSRequest {
 	oldRec := d.client.checkForRec(rec)
 	if oldRec == nil {
 		klog.Infof("No record exists for %s\n", domain)
-		return nil
+		return d
 	}
 
 	copy(rec.Rrdatas, oldRec.Rrdatas)
@@ -219,7 +223,7 @@ func (d *DNSRequest) AddToSRV(srv, domain string, priority int) *DNSRequest {
 		// Failsafe
 		if rec.Name == oldRec.Name && dataContains(oldRec, domain) {
 			klog.V(2).Infof("Record exists: %+v\n", oldRec)
-			return nil
+			return d
 		}
 
 		// We need to add the new endpoint
@@ -244,7 +248,7 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) *DNSRequest {
 	oldRec := d.client.checkForRec(rec)
 	if oldRec == nil {
 		klog.Infof("No record exists for %s\n", srv)
-		return nil
+		return d
 	}
 
 	copy(rec.Rrdatas, oldRec.Rrdatas)
