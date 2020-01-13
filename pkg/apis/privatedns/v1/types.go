@@ -22,7 +22,8 @@ type PrivateDNS struct {
 type PrivateDNSSpec struct {
 	Label      string        `json:"label"`
 	Domain     string        `json:"domain"`
-	SRVName    string        `json:"srv-name"`
+	SRVPort    string        `json:"srv-por"`
+	SRVProto   string        `json:"srv-protocol"`
 	PodTimeout time.Duration `json:"pod-timeout"`
 	Service    bool          `json:"service"`
 	Subdomain  bool          `json:"subdomain"`

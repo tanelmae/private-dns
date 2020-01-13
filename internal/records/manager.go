@@ -16,7 +16,7 @@ type close struct{}
 
 // New creates the controller to watch pods with given properties
 // and trigger changes in the DNS records
-func New(name, domain, label, namespace, srvName string, service bool, podTimeout time.Duration,
+func New(name, domain, label, namespace, srvPort, srvProto string, service bool, podTimeout time.Duration,
 	kubeClient *kubernetes.Clientset, cloudDNS *pdns.CloudDNS) Manager {
 
 	m := Manager{
@@ -26,7 +26,8 @@ func New(name, domain, label, namespace, srvName string, service bool, podTimeou
 		namespace:  namespace,
 		label:      label,
 		domain:     domain,
-		srvName:    srvName,
+		srvProto:   srvProto,
+		srvPort:    srvPort,
 		service:    service,
 		timeout:    podTimeout,
 		pendingIP:  make(map[string]time.Time),
@@ -67,7 +68,8 @@ type Manager struct {
 	namespace  string
 	label      string
 	domain     string
-	srvName    string
+	srvProto   string
+	srvPort    string
 	service    bool
 	store      cache.Store
 	controller cache.Controller
@@ -120,7 +122,7 @@ func (m Manager) serviceAddresss(pod *v1.Pod) string {
 }
 
 func (m Manager) srvAddresss() string {
-	return m.srvName
+	return fmt.Sprintf("_%s._%s.%s", m.srvPort, m.srvProto, m.domain)
 }
 
 func (m Manager) podUpdated(oldObj, newObj interface{}) {
@@ -171,7 +173,7 @@ func (m Manager) deleteRecords(pod *v1.Pod) {
 		req.RemoveFromService(m.serviceAddresss(pod), pod.Status.PodIP)
 	}
 
-	if m.srvName != "" {
+	if m.srvProto != "" && m.srvPort != "" {
 		req.RemoveFromSRV(m.srvAddresss(), m.serviceAddresss(pod))
 	}
 	req.Do()
@@ -216,7 +218,7 @@ func (m Manager) ensureRecords(pod *v1.Pod) bool {
 		req.AddToService(m.serviceAddresss(pod), pod.Status.PodIP)
 	}
 
-	if m.srvName != "" {
+	if m.srvProto != "" && m.srvPort != "" {
 		req.AddToSRV(m.srvAddresss(), m.serviceAddresss(pod), 1)
 	}
 	return req.Do()

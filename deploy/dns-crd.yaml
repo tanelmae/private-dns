@@ -24,7 +24,9 @@ spec:
                   type: string
                 domain:
                   type: string
-                srv-name:
+                srv-port:
+                  type: string
+                srv-protocol:
                   type: string
                 pod-timeout:
                   type: string
