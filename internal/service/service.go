@@ -30,7 +30,7 @@ const (
 type close struct{}
 
 // New creates a new private DNS Controller
-func New(kubeConf *rest.Config, dnsClient *pdns.CloudDNS, namespace string) (*Controller, error) {
+func New(kubeConf *rest.Config, dnsClient pdns.DNSProvider, namespace string) (*Controller, error) {
 	var err error
 
 	c := &Controller{
@@ -57,7 +57,7 @@ type Controller struct {
 	mu         sync.Mutex
 	kubeClient *kubernetes.Clientset
 	crdClient  *privatedns.Clientset
-	dnsClient  *pdns.CloudDNS
+	dnsClient  pdns.DNSProvider
 	res        map[string]*records.Manager
 	namespace  string
 }

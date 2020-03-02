@@ -26,6 +26,10 @@ func metadataRequest(urlPath string) (string, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET",
 		fmt.Sprintf("http://metadata/computeMetadata/v1/%s", urlPath), nil)
+	if err != nil {
+		return "", err
+	}
+
 	req.Header.Add("Metadata-Flavor", "Google")
 	resp, err := client.Do(req)
 	if err != nil {

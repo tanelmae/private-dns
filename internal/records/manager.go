@@ -17,12 +17,12 @@ type close struct{}
 // New creates the controller to watch pods with given properties
 // and trigger changes in the DNS records
 func New(name, domain, label, namespace, srvPort, srvProto string, service bool, podTimeout time.Duration,
-	kubeClient *kubernetes.Clientset, cloudDNS *pdns.CloudDNS) Manager {
+	kubeClient *kubernetes.Clientset, DNSprovider pdns.DNSProvider) Manager {
 
 	m := Manager{
 		name:       name,
 		kubeClient: kubeClient,
-		dnsClient:  cloudDNS,
+		dnsClient:  DNSprovider,
 		namespace:  namespace,
 		label:      label,
 		domain:     domain,
@@ -60,7 +60,7 @@ func New(name, domain, label, namespace, srvPort, srvProto string, service bool,
 type Manager struct {
 	name       string
 	kubeClient *kubernetes.Clientset
-	dnsClient  *pdns.CloudDNS
+	dnsClient  pdns.DNSProvider
 	timeout    time.Duration
 	resLabel   string
 	pendingIP  map[string]time.Time
@@ -136,7 +136,9 @@ func (m Manager) podUpdated(oldObj, newObj interface{}) {
 	if isPendingIP && pod.Status.PodIP != "" {
 		klog.V(2).Infof("Able to resolve a pending record for %s since %s\n", podName, lastTime.String())
 
-		if m.ensureRecords(pod) {
+		if err := m.ensureRecords(pod); err != nil {
+			klog.Error(err)
+		} else {
 			delete(m.pendingIP, pendingID)
 		}
 	}
@@ -150,11 +152,11 @@ func (m Manager) podCreated(obj interface{}) {
 	klog.V(2).Infof("Pod created: %s/%s", namespace, podName)
 	m.ensureRecords(pod)
 
-	if m.ensureRecords(pod) {
+	if err := m.ensureRecords(pod); err != nil {
+		klog.Error(err)
 		pendingID := fmt.Sprintf("%s/%s", namespace, podName)
 		m.pendingIP[pendingID] = time.Now()
 	}
-
 }
 
 // Handler for pod deletion events
@@ -179,7 +181,7 @@ func (m Manager) deleteRecords(pod *v1.Pod) {
 	req.Do()
 }
 
-func (m Manager) ensureRecords(pod *v1.Pod) bool {
+func (m Manager) ensureRecords(pod *v1.Pod) error {
 	var err error
 
 	if pod.Status.PodIP == "" {
@@ -201,14 +203,13 @@ func (m Manager) ensureRecords(pod *v1.Pod) bool {
 		pod, err = m.kubeClient.CoreV1().Pods(
 			pod.GetNamespace()).Get(pod.GetName(), metav1.GetOptions{})
 		if err != nil {
-			klog.Error(err)
-			return false
+			return err
 		}
 
 		// Leave if for the pod updated event handler
 		if err != nil || pod.Status.PodIP == "" {
 			klog.V(2).Infof("Failed get pod IP in %s\n", m.timeout)
-			return false
+			return err
 		}
 	}
 

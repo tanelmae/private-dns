@@ -1,4 +1,4 @@
-package pdns
+package gcp
 
 import (
 	"fmt"
@@ -8,17 +8,20 @@ import (
 	"io/ioutil"
 	"k8s.io/klog/v2"
 	"time"
+
+	"github.com/tanelmae/private-dns/pkg/pdns"
 )
 
 // CloudDNS is a wrapper for GCP SDK api to hold relevant conf
 type CloudDNS struct {
-	api     *dns.Service
-	zone    string
-	project string
+	api         *dns.Service
+	zone        string
+	reverseZone string
+	project     string
 }
 
 // FromJSON creaties DNS client instance with JSON key file
-func FromJSON(filePath, zone, project string) *CloudDNS {
+func FromJSON(filePath, zone, reverseZone, project string) *CloudDNS {
 	dat, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		klog.Fatalln(err)
@@ -32,14 +35,18 @@ func FromJSON(filePath, zone, project string) *CloudDNS {
 	if err != nil {
 		klog.Fatalln(err)
 	}
-	return &CloudDNS{api: dnsSvc, zone: zone, project: project}
+	return &CloudDNS{
+		api:         dnsSvc,
+		zone:        zone,
+		reverseZone: reverseZone,
+		project:     project,
+	}
 }
 
-func (c *CloudDNS) applyChange(change *dns.Change) bool {
+func (c *CloudDNS) applyChange(change *dns.Change) error {
 	chg, err := c.api.Changes.Create(c.project, c.zone, change).Do()
 	if err != nil {
-		klog.Errorln(err)
-		return false
+		return err
 	}
 
 	// wait for change to be acknowledged
@@ -48,11 +55,10 @@ func (c *CloudDNS) applyChange(change *dns.Change) bool {
 
 		chg, err = c.api.Changes.Get(c.project, c.zone, chg.Id).Do()
 		if err != nil {
-			klog.Errorln(err)
-			return false
+			return err
 		}
 	}
-	return true
+	return nil
 }
 
 func (c *CloudDNS) checkForRec(rec *dns.ResourceRecordSet) *dns.ResourceRecordSet {
@@ -69,7 +75,7 @@ func (c *CloudDNS) checkForRec(rec *dns.ResourceRecordSet) *dns.ResourceRecordSe
 	return list.Rrsets[0]
 }
 
-func (c *CloudDNS) NewRequest() *DNSRequest {
+func (c *CloudDNS) NewRequest() pdns.DNSRequest {
 	return &DNSRequest{
 		client: c,
 		change: &dns.Change{},
@@ -81,10 +87,10 @@ type DNSRequest struct {
 	change *dns.Change
 }
 
-func (d *DNSRequest) Do() bool {
+func (d *DNSRequest) Do() error {
 	if len(d.change.Deletions) < 1 && len(d.change.Additions) < 1 {
 		klog.V(2).Infoln("No changes to be done")
-		return true
+		return nil
 	}
 	return d.client.applyChange(d.change)
 }
@@ -97,7 +103,7 @@ func (d *DNSRequest) addition(rec *dns.ResourceRecordSet) {
 	d.change.Additions = append(d.change.Additions, rec)
 }
 
-func (d *DNSRequest) CreateRecord(domain, ip string) *DNSRequest {
+func (d *DNSRequest) CreateRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
@@ -110,7 +116,7 @@ func (d *DNSRequest) CreateRecord(domain, ip string) *DNSRequest {
 
 	if oldRec != nil && rec.Rrdatas[0] == oldRec.Rrdatas[0] {
 		klog.V(2).Infof("Record exists: %+v\n", rec)
-		return d
+		return
 	}
 
 	// Just a safeguard for case there is some stale record
@@ -120,11 +126,11 @@ func (d *DNSRequest) CreateRecord(domain, ip string) *DNSRequest {
 		d.deletion(rec)
 	}
 	d.addition(rec)
-	return d
+	return
 }
 
 // DeleteRecord deletes a record
-func (d *DNSRequest) DeleteRecord(domain, ip string) *DNSRequest {
+func (d *DNSRequest) DeleteRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
@@ -143,21 +149,21 @@ func (d *DNSRequest) DeleteRecord(domain, ip string) *DNSRequest {
 
 	if len(list.Rrsets) == 0 {
 		klog.V(2).Infof("No DNS record found for %s/%s", rec.Name, ip)
-		return d
+		return
 	}
 
 	// If records and pods have somehow got into inconsistent state
 	// we avoid deleting records that don't match the event.
 	if ip != list.Rrsets[0].Rrdatas[0] {
 		klog.V(2).Infof("No DNS record found for %s with the same IP (%s)", rec.Name, ip)
-		return d
+		return
 	}
 	d.deletion(rec)
-	return d
+	return
 }
 
 // AddToService adds the given IP to A record with multiple IPs
-func (d *DNSRequest) AddToService(domain, ip string) *DNSRequest {
+func (d *DNSRequest) AddToService(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
@@ -170,7 +176,7 @@ func (d *DNSRequest) AddToService(domain, ip string) *DNSRequest {
 
 	if oldRec != nil && dataContains(oldRec, ip) {
 		klog.V(2).Infof("Service %s record exists and contains %s\n", domain, ip)
-		return d
+		return
 	}
 
 	// Service exists and we need to add the IP
@@ -179,11 +185,11 @@ func (d *DNSRequest) AddToService(domain, ip string) *DNSRequest {
 		d.deletion(oldRec)
 	}
 	d.addition(rec)
-	return d
+	return
 }
 
 // RemoveFromService removes given IP from an A record with multiple IPs
-func (d *DNSRequest) RemoveFromService(domain, ip string) *DNSRequest {
+func (d *DNSRequest) RemoveFromService(domain, ip string) {
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
 		Rrdatas: nil,
@@ -194,7 +200,7 @@ func (d *DNSRequest) RemoveFromService(domain, ip string) *DNSRequest {
 	oldRec := d.client.checkForRec(rec)
 	if oldRec == nil {
 		klog.V(2).Infof("No record exists for %s\n", domain)
-		return d
+		return
 	}
 
 	if newRec, ok := removeData(oldRec, ip); ok {
@@ -204,11 +210,11 @@ func (d *DNSRequest) RemoveFromService(domain, ip string) *DNSRequest {
 	}
 
 	d.deletion(oldRec)
-	return d
+	return
 }
 
 // AddToSRV adds domain to SRV record
-func (d *DNSRequest) AddToSRV(srv, domain string, priority int) *DNSRequest {
+func (d *DNSRequest) AddToSRV(srv, domain string, priority int) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", srv),
@@ -223,7 +229,7 @@ func (d *DNSRequest) AddToSRV(srv, domain string, priority int) *DNSRequest {
 		// Failsafe
 		if rec.Name == oldRec.Name && dataContains(oldRec, domain) {
 			klog.V(2).Infof("Record exists: %+v\n", oldRec)
-			return d
+			return
 		}
 
 		// We need to add the new endpoint
@@ -233,11 +239,11 @@ func (d *DNSRequest) AddToSRV(srv, domain string, priority int) *DNSRequest {
 		}
 	}
 	d.addition(rec)
-	return d
+	return
 }
 
 // RemoveFromSRV removes domain from SRV record
-func (d *DNSRequest) RemoveFromSRV(srv, domain string) *DNSRequest {
+func (d *DNSRequest) RemoveFromSRV(srv, domain string) {
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", srv),
 		Rrdatas: nil,
@@ -248,7 +254,7 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) *DNSRequest {
 	oldRec := d.client.checkForRec(rec)
 	if oldRec == nil {
 		klog.V(2).Infof("No record exists for %s\n", srv)
-		return d
+		return
 	}
 
 	if newRec, ok := removeData(rec, domain); ok {
@@ -258,7 +264,7 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) *DNSRequest {
 	}
 
 	d.deletion(oldRec)
-	return d
+	return
 }
 
 // UTILS

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/tanelmae/private-dns/internal/service"
 	"github.com/tanelmae/private-dns/pkg/gcp"
-	"github.com/tanelmae/private-dns/pkg/pdns"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
@@ -19,9 +18,10 @@ func main() {
 	// Fix for Kubernetes client trying to log to /tmp
 	klog.SetOutput(os.Stderr)
 
-	project := flag.String("project", "", "GCP project where the DNS zone is. Defaults to the same as GKE cluster.")
-	zone := flag.String("zone", "", "GCP DNS zone where to write the records")
-	saFile := flag.String("sa-file", "", "Path to GCP service account credentials")
+	project := flag.String("gcp-project", "", "GCP project where the DNS zone is. Defaults to the same as GKE cluster.")
+	zone := flag.String("gcp-zone", "", "GCP DNS zone where to write the records")
+	reverseZone := flag.String("gcp-reverse-zone", "", "GCP DNS zone where to write the reverse lookup records")
+	saFile := flag.String("gcp-cred", "", "Path to GCP service account credentials")
 	namespace := flag.String("namespace", "", "Limits private DNS to the given namesapce")
 	kubeconfig := flag.String("kubeconfig", "", "Path to kubeconfig file. Not needed on Kubernetes.")
 
@@ -41,7 +41,7 @@ func main() {
 	}
 
 	// JSON key file for service account with DNS admin permissions
-	dnsClient := pdns.FromJSON(*saFile, *zone, *project)
+	dnsClient := gcp.FromJSON(*saFile, *zone, *reverseZone, *project)
 	klog.Infof("DNS client: %+v\n", dnsClient)
 	klog.Flush()
 
