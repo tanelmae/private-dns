@@ -1,15 +1,13 @@
 package gcp
 
 import (
+	"context"
 	"fmt"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
+	"github.com/tanelmae/private-dns/pkg/pdns"
 	"google.golang.org/api/dns/v1"
-	"io/ioutil"
+	"google.golang.org/api/option"
 	"k8s.io/klog/v2"
 	"time"
-
-	"github.com/tanelmae/private-dns/pkg/pdns"
 )
 
 // CloudDNS is a wrapper for GCP SDK api to hold relevant conf
@@ -22,19 +20,11 @@ type CloudDNS struct {
 
 // FromJSON creaties DNS client instance with JSON key file
 func FromJSON(filePath, zone, reverseZone, project string) *CloudDNS {
-	dat, err := ioutil.ReadFile(filePath)
+	dnsSvc, err := dns.NewService(context.Background(), option.WithCredentialsFile(filePath))
 	if err != nil {
 		klog.Fatalln(err)
 	}
 
-	conf, err := google.JWTConfigFromJSON(dat, dns.NdevClouddnsReadwriteScope)
-	if err != nil {
-		klog.Fatalln(err)
-	}
-	dnsSvc, err := dns.New(conf.Client(oauth2.NoContext))
-	if err != nil {
-		klog.Fatalln(err)
-	}
 	return &CloudDNS{
 		api:         dnsSvc,
 		zone:        zone,
@@ -126,7 +116,6 @@ func (d *DNSRequest) CreateRecord(domain, ip string) {
 		d.deletion(rec)
 	}
 	d.addition(rec)
-	return
 }
 
 // DeleteRecord deletes a record
@@ -159,7 +148,6 @@ func (d *DNSRequest) DeleteRecord(domain, ip string) {
 		return
 	}
 	d.deletion(rec)
-	return
 }
 
 // AddToService adds the given IP to A record with multiple IPs
@@ -185,7 +173,6 @@ func (d *DNSRequest) AddToService(domain, ip string) {
 		d.deletion(oldRec)
 	}
 	d.addition(rec)
-	return
 }
 
 // RemoveFromService removes given IP from an A record with multiple IPs
@@ -210,7 +197,6 @@ func (d *DNSRequest) RemoveFromService(domain, ip string) {
 	}
 
 	d.deletion(oldRec)
-	return
 }
 
 // AddToSRV adds domain to SRV record
@@ -239,7 +225,6 @@ func (d *DNSRequest) AddToSRV(srv, domain string, priority int) {
 		}
 	}
 	d.addition(rec)
-	return
 }
 
 // RemoveFromSRV removes domain from SRV record
@@ -264,7 +249,6 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) {
 	}
 
 	d.deletion(oldRec)
-	return
 }
 
 // UTILS
@@ -289,74 +273,3 @@ func removeData(rec *dns.ResourceRecordSet, data string) (*dns.ResourceRecordSet
 	}
 	return nil, false
 }
-
-// BulkSync struct exists to reducse GCP API requests
-// when running fallback job to check that DNS records
-// exists for all the pods that are supposed to have them
-
-/*
-type BulkSync struct {
-	client *CloudDNS
-	list   map[string]*dns.ResourceRecordSet
-}
-
-// GetBulker returns BulkSync instance with loaded DNS list
-func GetBulker(client *CloudDNS) *BulkSync {
-	bulker := BulkSync{client: client}
-	bulker.loadList()
-	return &bulker
-}
-
-// DeleteRemaining deletes all stale records
-// Assumes that bulk.list only has stale records
-func (bulk BulkSync) DeleteRemaining() {
-	if len(bulk.list) == 0 {
-		return
-	}
-
-	var deletions []*dns.ResourceRecordSet
-	for _, rec := range bulk.list {
-		deletions = append(deletions, rec)
-	}
-
-	klog.V(2).Infof("%d stale records found\n", len(deletions))
-
-	change := &dns.Change{
-		Deletions: deletions,
-	}
-
-	_, err := bulk.client.dnsSvc.Changes.Create(bulk.client.project, bulk.client.zone, change).Do()
-	if err != nil {
-		panic(err)
-	}
-}
-
-// CheckNext checks next item from loaded DNS records
-func (bulk BulkSync) CheckNext(name, owner, ip string) {
-	// Check that record exists for the given pod with given IP
-	rec, found := bulk.list[name]
-	if found && rec.Rrdatas[0] == ip {
-		klog.V(2).Infof("Record found for %s:%v\n", name, rec)
-		delete(bulk.list, name)
-	} else {
-		bulk.client.CreateRecord(name, owner, ip)
-	}
-}
-
-func (bulk BulkSync) loadList() {
-	wholeZoneResponse, err := bulk.client.dnsSvc.ResourceRecordSets.List(bulk.client.project, bulk.client.zone).Do()
-	if err != nil {
-		panic(err)
-	}
-
-	list := make(map[string]*dns.ResourceRecordSet)
-	for _, rec := range wholeZoneResponse.Rrsets {
-		if strings.HasSuffix(rec.Name, bulk.client.domain+".") {
-			name := rec.Name[:strings.IndexByte(rec.Name, '.')]
-			list[name] = rec
-			klog.V(2).Infof("Found DNS record for %s:%s", name, rec.Name)
-		}
-	}
-	bulk.list = list
-}
-*/
