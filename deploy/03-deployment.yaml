@@ -1,0 +1,40 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdns
+  namespace: default
+  labels:
+    app: pdns
+spec:
+  # There can be only one or there will be constant race
+  # Later there could be multiple with leadership selection
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pdns
+  template:
+    metadata:
+      labels:
+        app: pdns
+    spec:
+      volumes:
+        - name: service-account
+          secret:
+            secretName: dns-account
+            defaultMode: 256
+      serviceAccountName: pdns
+      restartPolicy: Always
+      containers:
+        - name: service
+          image: tanelmae/private-dns:test
+          imagePullPolicy: Always
+          args:
+            - "-gcp-zone=pdns"
+            - "-gcp-reverse-zone=pdns"
+            - "-gcp-cred=/account/dns.json"
+            - "-namespace=default"
+            - "-v=4"
+          volumeMounts:
+            - name: service-account
+              mountPath: "/account"
