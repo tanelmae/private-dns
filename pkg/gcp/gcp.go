@@ -93,7 +93,8 @@ func (d *DNSRequest) addition(rec *dns.ResourceRecordSet) {
 	d.change.Additions = append(d.change.Additions, rec)
 }
 
-func (d *DNSRequest) CreateRecord(domain, ip string) {
+// RemoveRecord adds A record with single IP
+func (d *DNSRequest) AddRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
@@ -116,10 +117,13 @@ func (d *DNSRequest) CreateRecord(domain, ip string) {
 		d.deletion(rec)
 	}
 	d.addition(rec)
+	if d.client.reverseZone != "" {
+		d.AddReverseRecord(domain, ip)
+	}
 }
 
-// DeleteRecord deletes a record
-func (d *DNSRequest) DeleteRecord(domain, ip string) {
+// RemoveRecord deletes A record
+func (d *DNSRequest) RemoveRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
@@ -145,6 +149,68 @@ func (d *DNSRequest) DeleteRecord(domain, ip string) {
 	// we avoid deleting records that don't match the event.
 	if ip != list.Rrsets[0].Rrdatas[0] {
 		klog.V(2).Infof("No DNS record found for %s with the same IP (%s)", rec.Name, ip)
+		return
+	}
+	d.deletion(rec)
+
+	if d.client.reverseZone != "" {
+		d.RemoveReverseRecord(domain, ip)
+	}
+}
+
+// RemoveRecord adds A record with single IP
+func (d *DNSRequest) AddReverseRecord(domain, ip string) {
+
+	rec := &dns.ResourceRecordSet{
+		Name:    fmt.Sprintf("%s.in-addr.arpa.", ip),
+		Rrdatas: []string{domain},
+		Ttl:     int64(60),
+		Type:    "PTR",
+	}
+
+	oldRec := d.client.checkForRec(rec)
+
+	if oldRec != nil && rec.Rrdatas[0] == oldRec.Rrdatas[0] {
+		klog.V(2).Infof("Record exists: %+v\n", rec)
+		return
+	}
+
+	// Just a safeguard for case there is some stale record
+	// as it would fail the API request
+	if oldRec != nil && rec.Rrdatas[0] != oldRec.Rrdatas[0] {
+		klog.V(2).Infof("Stale record found: %+v\n", oldRec)
+		d.deletion(rec)
+	}
+	d.addition(rec)
+}
+
+// RemoveRecord deletes A record
+func (d *DNSRequest) RemoveReverseRecord(domain, ip string) {
+
+	rec := &dns.ResourceRecordSet{
+		Name:    fmt.Sprintf("%s.in-addr.arpa.", ip),
+		Rrdatas: []string{domain},
+		Ttl:     int64(60),
+		Type:    "PTR",
+	}
+
+	// We get the existing record from the DNS zone to check if it exists
+	list, err := d.client.api.ResourceRecordSets.List(
+		d.client.project, d.client.reverseZone).Name(rec.Name).Type(rec.Type).MaxResults(1).Do()
+
+	if err != nil {
+		panic(err)
+	}
+
+	if len(list.Rrsets) == 0 {
+		klog.V(2).Infof("No PTR record found for %s/%s", rec.Name, ip)
+		return
+	}
+
+	// If records and pods have somehow got into inconsistent state
+	// we avoid deleting records that don't match the event.
+	if domain != list.Rrsets[0].Rrdatas[0] {
+		klog.V(2).Infof("No PTR record found for %s with the same domain (%s)", rec.Name, domain)
 		return
 	}
 	d.deletion(rec)

@@ -5,8 +5,10 @@ type DNSProvider interface {
 }
 
 type DNSRequest interface {
-	CreateRecord(domain, ip string)
-	DeleteRecord(domain, ip string)
+	AddRecord(domain, ip string)
+	RemoveRecord(domain, ip string)
+	AddReverseRecord(domain, ip string)
+	RemoveReverseRecord(domain, ip string)
 	AddToService(domain, ip string)
 	RemoveFromService(domain, ip string)
 	AddToSRV(srv, domain string, priority int)

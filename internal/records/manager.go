@@ -62,7 +62,6 @@ type Manager struct {
 	kubeClient *kubernetes.Clientset
 	dnsClient  pdns.DNSProvider
 	timeout    time.Duration
-	resLabel   string
 	pendingIP  map[string]time.Time
 	stopChan   chan struct{}
 	namespace  string
@@ -150,7 +149,6 @@ func (m Manager) podCreated(obj interface{}) {
 	podName := pod.GetName()
 	namespace := pod.GetNamespace()
 	klog.V(2).Infof("Pod created: %s/%s", namespace, podName)
-	m.ensureRecords(pod)
 
 	if err := m.ensureRecords(pod); err != nil {
 		klog.Error(err)
@@ -168,8 +166,7 @@ func (m Manager) podDeleted(obj interface{}) {
 
 func (m Manager) deleteRecords(pod *v1.Pod) {
 	req := m.dnsClient.NewRequest()
-
-	req.DeleteRecord(m.podAddresss(pod), pod.Status.PodIP)
+	req.RemoveRecord(m.podAddresss(pod), pod.Status.PodIP)
 
 	if m.service {
 		req.RemoveFromService(m.serviceAddresss(pod), pod.Status.PodIP)
@@ -178,7 +175,13 @@ func (m Manager) deleteRecords(pod *v1.Pod) {
 	if m.srvProto != "" && m.srvPort != "" {
 		req.RemoveFromSRV(m.srvAddresss(), m.serviceAddresss(pod))
 	}
-	req.Do()
+
+	// TODO: should handle those failures somehow or
+	// obsolete records might pile up
+	err := req.Do()
+	if err != nil {
+		klog.Errorln(err)
+	}
 }
 
 func (m Manager) ensureRecords(pod *v1.Pod) error {
@@ -214,7 +217,8 @@ func (m Manager) ensureRecords(pod *v1.Pod) error {
 	}
 
 	req := m.dnsClient.NewRequest()
-	req.CreateRecord(m.podAddresss(pod), pod.Status.PodIP)
+	req.AddRecord(m.podAddresss(pod), pod.Status.PodIP)
+
 	if m.service {
 		req.AddToService(m.serviceAddresss(pod), pod.Status.PodIP)
 	}
