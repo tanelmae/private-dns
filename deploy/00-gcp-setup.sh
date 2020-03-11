@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 
 CURRENT_PROJECT=$(gcloud config get-value project)
+
+# Name of the network DNS zones needs to be attached to
 VPC_NAME="${1:-default}"
+# DNS zone for A and SRV records
 DNS_ZONE="k8s-dns"
+# DNS zone for reverse lookup (PTR records)
 DNS_REV_ZONE="k8s-reverse-dns"
 
+# Service account the controller will use to manage the records
 SA_NAME="private-dns"
 FULL_SA="${SA_NAME}@${CURRENT_PROJECT}.iam.gserviceaccount.com"
 
@@ -17,7 +22,7 @@ echo "DNS reverse lookup zone: ${DNS_REV_ZONE}"
 echo "Service account: ${FULL_SA}"
 
 echo "If you want to use existng VPC:"
-echo "	./00-rq.sh <vpc-name>"
+echo "	./00-gcp-setup.sh <vpc-name>"
 read -p "Press any key to continue or Ctrl+C to cancel"
 set -e
 

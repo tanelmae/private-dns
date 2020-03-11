@@ -27,7 +27,7 @@ spec:
       restartPolicy: Always
       containers:
         - name: service
-          image: tanelmae/private-dns:test
+          image: tanelmae/private-dns:latest
           imagePullPolicy: Always
           args:
             - "-gcp-zone=pdns"
