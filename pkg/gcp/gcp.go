@@ -33,8 +33,8 @@ func FromJSON(filePath, zone, reverseZone, project string) *CloudDNS {
 	}
 }
 
-func (c *CloudDNS) applyChange(change *dns.Change) error {
-	chg, err := c.api.Changes.Create(c.project, c.zone, change).Do()
+func (c *CloudDNS) applyChange(changes *dns.Change) error {
+	chg, err := c.api.Changes.Create(c.project, c.zone, changes).Do()
 	if err != nil {
 		return err
 	}
@@ -44,6 +44,24 @@ func (c *CloudDNS) applyChange(change *dns.Change) error {
 		time.Sleep(time.Second)
 
 		chg, err = c.api.Changes.Get(c.project, c.zone, chg.Id).Do()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *CloudDNS) applyRevChange(changes *dns.Change) error {
+	chg, err := c.api.Changes.Create(c.project, c.reverseZone, changes).Do()
+	if err != nil {
+		return err
+	}
+
+	// wait for change to be acknowledged
+	for chg.Status == "pending" {
+		time.Sleep(time.Second)
+
+		chg, err = c.api.Changes.Get(c.project, c.reverseZone, chg.Id).Do()
 		if err != nil {
 			return err
 		}
@@ -67,22 +85,35 @@ func (c *CloudDNS) checkForRec(rec *dns.ResourceRecordSet) *dns.ResourceRecordSe
 
 func (c *CloudDNS) NewRequest() pdns.DNSRequest {
 	return &DNSRequest{
-		client: c,
-		change: &dns.Change{},
+		client:    c,
+		change:    &dns.Change{},
+		revChange: &dns.Change{},
 	}
 }
 
 type DNSRequest struct {
-	client *CloudDNS
-	change *dns.Change
+	client    *CloudDNS
+	change    *dns.Change
+	revChange *dns.Change
 }
 
 func (d *DNSRequest) Do() error {
-	if len(d.change.Deletions) < 1 && len(d.change.Additions) < 1 {
-		klog.V(2).Infoln("No changes to be done")
-		return nil
+	var err error
+
+	if len(d.change.Deletions) > 1 || len(d.change.Additions) > 1 {
+		err = d.client.applyChange(d.change)
+		if err != nil {
+			return err
+		}
 	}
-	return d.client.applyChange(d.change)
+
+	if len(d.revChange.Deletions) > 1 || len(d.revChange.Additions) > 1 {
+		err = d.client.applyRevChange(d.revChange)
+		if err != nil {
+			return err
+		}
+	}
+	return err
 }
 
 func (d *DNSRequest) deletion(rec *dns.ResourceRecordSet) {
