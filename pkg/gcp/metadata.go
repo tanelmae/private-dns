@@ -14,12 +14,12 @@ func GetProject() (string, error) {
 
 // GetClusterName returns GKE cluster name
 func GetClusterName() (string, error) {
-	return getMetadata("/instance/attributes/cluster-name")
+	return getMetadata("instance/attributes/cluster-name")
 }
 
 // GetClusterLocation returns GKE cluster location
 func GetClusterLocation() (string, error) {
-	return getMetadata("/instance/attributes/cluster-location")
+	return getMetadata("instance/attributes/cluster-location")
 }
 
 func metadataRequest(urlPath string) (string, error) {
@@ -37,6 +37,10 @@ func metadataRequest(urlPath string) (string, error) {
 	}
 
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GCP metadata server returned %d", resp.StatusCode)
+	}
 
 	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
