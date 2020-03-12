@@ -124,6 +124,14 @@ func (d *DNSRequest) addition(rec *dns.ResourceRecordSet) {
 	d.change.Additions = append(d.change.Additions, rec)
 }
 
+func (d *DNSRequest) revDeletion(rec *dns.ResourceRecordSet) {
+	d.revChange.Deletions = append(d.revChange.Deletions, rec)
+}
+
+func (d *DNSRequest) revAddition(rec *dns.ResourceRecordSet) {
+	d.revChange.Additions = append(d.revChange.Additions, rec)
+}
+
 // RemoveRecord adds A record with single IP
 func (d *DNSRequest) AddRecord(domain, ip string) {
 
@@ -212,7 +220,7 @@ func (d *DNSRequest) AddReverseRecord(domain, ip string) {
 		klog.V(2).Infof("Stale record found: %+v\n", oldRec)
 		d.deletion(rec)
 	}
-	d.addition(rec)
+	d.revAddition(rec)
 }
 
 // RemoveRecord deletes A record
@@ -244,7 +252,7 @@ func (d *DNSRequest) RemoveReverseRecord(domain, ip string) {
 		klog.V(2).Infof("No PTR record found for %s with the same domain (%s)", rec.Name, domain)
 		return
 	}
-	d.deletion(rec)
+	d.revDeletion(rec)
 }
 
 // AddToService adds the given IP to A record with multiple IPs
