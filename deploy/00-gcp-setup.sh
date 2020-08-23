@@ -26,7 +26,8 @@ echo "	./00-gcp-setup.sh <vpc-name>"
 read -p "Press any key to continue or Ctrl+C to cancel"
 set -e
 
-# Create VPC if it doesn't exist
+# If VPC already exists it should be the one with clustes that will be running the controller.
+# If new VPC is to be created Kubernetes cluster(s) should be created in it.
 if [ -z "$(gcloud compute networks list --filter=name=${VPC_NAME} --format='value(name)')" ]; then
 	gcloud compute networks create "${VPC_NAME}" --subnet-mode auto
 	echo "NOTE: Make sure you create your cluster in ${VPC_NAME} network"

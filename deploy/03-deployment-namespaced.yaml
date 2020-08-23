@@ -30,9 +30,10 @@ spec:
           image: tanelmae/private-dns:latest
           imagePullPolicy: Always
           args:
-            - "-gcp-zone=k8s-dns"
-            - "-gcp-reverse-zone=k8s-reverse-dns"
+            - "-gcp-zone=pdns"
+            - "-gcp-reverse-zone=pdns"
             - "-gcp-cred=/account/dns.json"
+            - "-namespace=default"
             - "-v=4"
           volumeMounts:
             - name: service-account
