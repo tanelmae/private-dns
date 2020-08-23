@@ -1,3 +1,3 @@
 package privatedns
 
-const GroupName = "tanelmae.github.com"
+const GroupName = "tanelmae.com"
