@@ -3,11 +3,22 @@ package gcp
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/tanelmae/private-dns/pkg/pdns"
 	"google.golang.org/api/dns/v1"
 	"google.golang.org/api/option"
 	"k8s.io/klog/v2"
-	"time"
+)
+
+const (
+	typeA   = "A"
+	typeSRV = "SRV"
+	typePTR = "PTR"
+
+	defaultTTL int64 = 60
+
+	statusPending = "pending"
 )
 
 // CloudDNS is a wrapper for GCP SDK api to hold relevant conf
@@ -40,7 +51,7 @@ func (c *CloudDNS) applyChange(changes *dns.Change) error {
 	}
 
 	// wait for change to be acknowledged
-	for chg.Status == "pending" {
+	for chg.Status == statusPending {
 		time.Sleep(time.Second)
 
 		chg, err = c.api.Changes.Get(c.project, c.zone, chg.Id).Do()
@@ -58,7 +69,7 @@ func (c *CloudDNS) applyRevChange(changes *dns.Change) error {
 	}
 
 	// wait for change to be acknowledged
-	for chg.Status == "pending" {
+	for chg.Status == statusPending {
 		time.Sleep(time.Second)
 
 		chg, err = c.api.Changes.Get(c.project, c.reverseZone, chg.Id).Do()
@@ -97,6 +108,8 @@ type DNSRequest struct {
 	revChange *dns.Change
 }
 
+// Do makes the request with all the attached changes
+// No error would be returned when no changes have been added
 func (d *DNSRequest) Do() error {
 	var err error
 
@@ -132,14 +145,14 @@ func (d *DNSRequest) revAddition(rec *dns.ResourceRecordSet) {
 	d.revChange.Additions = append(d.revChange.Additions, rec)
 }
 
-// RemoveRecord adds A record with single IP
+// AddRecord adds A record with single IP
 func (d *DNSRequest) AddRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
 		Rrdatas: []string{ip},
-		Ttl:     int64(60),
-		Type:    "A",
+		Ttl:     defaultTTL,
+		Type:    typeA,
 	}
 
 	oldRec := d.client.checkForRec(rec)
@@ -161,14 +174,14 @@ func (d *DNSRequest) AddRecord(domain, ip string) {
 	}
 }
 
-// RemoveRecord deletes A record
+// RemoveRecord deletes A record with a single IP
 func (d *DNSRequest) RemoveRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
 		Rrdatas: []string{ip},
-		Ttl:     int64(60),
-		Type:    "A",
+		Ttl:     defaultTTL,
+		Type:    typeA,
 	}
 
 	// We get the existing record from the DNS zone to check if it exists
@@ -176,7 +189,8 @@ func (d *DNSRequest) RemoveRecord(domain, ip string) {
 		d.client.project, d.client.zone).Name(rec.Name).Type(rec.Type).MaxResults(1).Do()
 
 	if err != nil {
-		panic(err)
+		klog.V(2).Infoln(err)
+		return
 	}
 
 	if len(list.Rrsets) == 0 {
@@ -197,14 +211,14 @@ func (d *DNSRequest) RemoveRecord(domain, ip string) {
 	}
 }
 
-// RemoveRecord adds A record with single IP
+// AddReverseRecord adds a PTR record for the reverse lookup
 func (d *DNSRequest) AddReverseRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.in-addr.arpa.", ip),
 		Rrdatas: []string{domain},
-		Ttl:     int64(60),
-		Type:    "PTR",
+		Ttl:     defaultTTL,
+		Type:    typePTR,
 	}
 
 	oldRec := d.client.checkForRec(rec)
@@ -223,14 +237,14 @@ func (d *DNSRequest) AddReverseRecord(domain, ip string) {
 	d.revAddition(rec)
 }
 
-// RemoveRecord deletes A record
+// RemoveReverseRecord removes a PTR record from the reverse lookup zone
 func (d *DNSRequest) RemoveReverseRecord(domain, ip string) {
 
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.in-addr.arpa.", ip),
 		Rrdatas: []string{domain},
-		Ttl:     int64(60),
-		Type:    "PTR",
+		Ttl:     defaultTTL,
+		Type:    typePTR,
 	}
 
 	// We get the existing record from the DNS zone to check if it exists
@@ -238,7 +252,8 @@ func (d *DNSRequest) RemoveReverseRecord(domain, ip string) {
 		d.client.project, d.client.reverseZone).Name(rec.Name).Type(rec.Type).MaxResults(1).Do()
 
 	if err != nil {
-		panic(err)
+		klog.V(2).Infoln(err)
+		return
 	}
 
 	if len(list.Rrsets) == 0 {
@@ -261,8 +276,8 @@ func (d *DNSRequest) AddToService(domain, ip string) {
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
 		Rrdatas: []string{ip},
-		Ttl:     int64(60),
-		Type:    "A",
+		Ttl:     defaultTTL,
+		Type:    typeA,
 	}
 
 	oldRec := d.client.checkForRec(rec)
@@ -285,8 +300,8 @@ func (d *DNSRequest) RemoveFromService(domain, ip string) {
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", domain),
 		Rrdatas: nil,
-		Ttl:     int64(60),
-		Type:    "A",
+		Ttl:     defaultTTL,
+		Type:    typeA,
 	}
 
 	oldRec := d.client.checkForRec(rec)
@@ -310,8 +325,8 @@ func (d *DNSRequest) AddToSRV(srv, domain string, priority int) {
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", srv),
 		Rrdatas: []string{domain},
-		Ttl:     int64(60),
-		Type:    "SRV",
+		Ttl:     defaultTTL,
+		Type:    typeSRV,
 	}
 
 	oldRec := d.client.checkForRec(rec)
@@ -337,8 +352,8 @@ func (d *DNSRequest) RemoveFromSRV(srv, domain string) {
 	rec := &dns.ResourceRecordSet{
 		Name:    fmt.Sprintf("%s.", srv),
 		Rrdatas: nil,
-		Ttl:     int64(60),
-		Type:    "SRV",
+		Ttl:     defaultTTL,
+		Type:    typeSRV,
 	}
 
 	oldRec := d.client.checkForRec(rec)
