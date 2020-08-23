@@ -2,14 +2,15 @@ package records
 
 import (
 	"fmt"
-	"github.com/tanelmae/private-dns/pkg/pdns"
-	"k8s.io/api/core/v1"
+	"time"
+
+	"github.com/tanelmae/private-dns/internal/pdns"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	"time"
 )
 
 type close struct{}

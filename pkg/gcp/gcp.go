@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tanelmae/private-dns/pkg/pdns"
+	"github.com/tanelmae/private-dns/internal/pdns"
 	"google.golang.org/api/dns/v1"
 	"google.golang.org/api/option"
 	"k8s.io/klog/v2"

@@ -2,21 +2,23 @@ package service
 
 import (
 	"fmt"
+
+	"github.com/tanelmae/private-dns/internal/pdns"
 	"github.com/tanelmae/private-dns/internal/records"
 	dnsAPI "github.com/tanelmae/private-dns/pkg/apis/privatedns/v1"
 	"github.com/tanelmae/private-dns/pkg/gcp"
 	"github.com/tanelmae/private-dns/pkg/gen/clientset/privatedns"
 	dnsV1 "github.com/tanelmae/private-dns/pkg/gen/informers/externalversions/privatedns/v1"
-	"github.com/tanelmae/private-dns/pkg/pdns"
 
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 
-	"k8s.io/klog/v2"
 	"os"
 	"os/signal"
+
+	"k8s.io/klog/v2"
 
 	"sync"
 	"syscall"
