@@ -8,8 +8,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.3 // indirect
 	github.com/stretchr/testify v1.5.1 // indirect
 	go.opencensus.io v0.22.1 // indirect
-	golang.org/x/net v0.0.0-20191007182048-72f939374954 // indirect
-	golang.org/x/sys v0.0.0-20191007154456-ef33b2fb2c41 // indirect
+	golang.org/x/net v0.7.0 // indirect
 	google.golang.org/api v0.10.0
 	google.golang.org/appengine v1.6.5 // indirect
 	google.golang.org/genproto v0.0.0-20191007204434-a023cd5227bd // indirect
